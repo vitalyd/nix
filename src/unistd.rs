@@ -1540,8 +1540,7 @@ pub fn getgrouplist(user: &CStr, group: Gid) -> Result<Vec<Gid>> {
         Ok(None) | Err(_) => <c_int>::max_value(),
     };
     use std::cmp::min;
-    let mut ngroups = min(ngroups_max, 8);
-    let mut groups = Vec::<Gid>::with_capacity(ngroups as usize);
+    let mut groups = Vec::<Gid>::with_capacity(min(ngroups_max, 8) as usize);
     cfg_if! {
         if #[cfg(any(target_os = "ios", target_os = "macos"))] {
             type getgrouplist_group_t = c_int;
@@ -1551,6 +1550,7 @@ pub fn getgrouplist(user: &CStr, group: Gid) -> Result<Vec<Gid>> {
     }
     let gid: gid_t = group.into();
     loop {
+        let mut ngroups = groups.capacity() as i32;
         let ret = unsafe {
             libc::getgrouplist(user.as_ptr(),
                                gid as getgrouplist_group_t,
@@ -1567,8 +1567,16 @@ pub fn getgrouplist(user: &CStr, group: Gid) -> Result<Vec<Gid>> {
             // BSD systems will still fill the groups buffer with as many
             // groups as possible, but Linux manpages do not mention this
             // behavior.
-            reserve_double_buffer_size(&mut groups, ngroups_max as usize)
-                .map_err(|_| Errno::EINVAL)?;
+            // Linux stores the number of groups found in ngroups.  We can
+            // use that to resize the buffer exactly.
+            cfg_if! {
+                if #[cfg(target_os = "linux")] {
+                    groups.reserve_exact(ngroups as usize);
+                } else {
+                    reserve_double_buffer_size(&mut groups, ngroups_max as usize)
+                        .map_err(|_| Errno::EINVAL)?;       
+                }
+            }            
         }
     }
 }
